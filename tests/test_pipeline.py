@@ -61,33 +61,31 @@ def test_invalid_stage_fails(spark, points, message):
         make_stage(source(spark, points))
 
 
-def test_complete_month_and_partial_year(spark):
+def test_complete_and_partial_month(spark):
     # на последнюю дату у провинций 128 и 262, вместе 390. Даты не суммируем.
     days = [date(2020, 12, 31) + timedelta(days=i) for i in range(32)]
     a = source(spark, [(d, str(100 + i - (3 if i >= 15 else 0))) for i, d in enumerate(days)], "A")
     b = source(spark, [(d, str(200 + 2 * i)) for i, d in enumerate(days)], "B")
     stage = make_stage(a.unionByName(b))
-    january = make_mart(stage, "month").where("period_start = date '2021-01-01'").first()
-    assert january.cumulative_deaths_end == 390
+    january = make_mart(stage).where("period_start = date '2021-01-01'").first()
+    assert january.deaths == 390
     assert january.observed_days == 31 and january.is_complete
     assert not january.is_incomplete_month
-    year = make_mart(stage, "year").where("period_start = date '2021-01-01'").first()
-    assert year.cumulative_deaths_end == 390 and year.is_incomplete_year
-    december = make_mart(stage, "month").where("period_start = date '2020-12-01'").first()
-    assert december.is_incomplete_month and december.cumulative_deaths_end == 300
+    december = make_mart(stage).where("period_start = date '2020-12-01'").first()
+    assert december.is_incomplete_month and december.deaths == 300
 
 
 def test_last_value_is_not_maximum(spark):
     stage = make_stage(source(spark, [(date(2021, 1, 1), "20"), (date(2021, 1, 2), "18")]))
-    row = make_mart(stage, "month").first()
-    assert row.cumulative_deaths_end == 18
-    assert not {"deaths", "unknown_days", "negative_corrections", "dq_has_corrections", "dq_has_unknown_changes"} & set(row.asDict())
+    row = make_mart(stage).first()
+    assert row.deaths == 18
+    assert not {"daily_deaths", "unknown_days", "negative_corrections"} & set(row.asDict())
 
 
 def test_leap_year_period(spark):
     frame = source(spark, [(date(2020, 2, 28), "10"), (date(2020, 2, 29), "11")])
-    row = make_mart(make_stage(frame), "month").first()
-    assert row.expected_days == 29 and row.observed_days == 2 and row.cumulative_deaths_end == 11
+    row = make_mart(make_stage(frame)).first()
+    assert row.expected_days == 29 and row.observed_days == 2 and row.deaths == 11
 
 
 def test_raw_preserves_unmapped_values(spark, tmp_path):
@@ -121,15 +119,6 @@ def test_korea_excluded_and_raw_keeps_every_row(spark):
     assert classified.where("exclusion_reason IS NULL").count() == 278
 
 
-@pytest.mark.parametrize("year,days", [(2020,366),(2021,365)])
-def test_full_calendar_year_flag(spark, year, days):
-    start = date(year,1,1) - timedelta(days=1)
-    stage = make_stage(source(spark, [(start + timedelta(days=i), str(100+i)) for i in range(days+1)]))
-    row = make_mart(stage, "year").where(f"period_start = date '{year}-01-01'").first()
-    assert not row.is_incomplete_year
-    assert row.cumulative_deaths_end == 100 + days
-
-
 def test_unrecognized_date_is_rejected_in_stage_not_raw(spark, tmp_path):
     path = tmp_path / "raw_2021.csv"
     path.write_text("Country/Region;Province/State;not-a-date;\nFrance;;10;\n")
@@ -137,3 +126,11 @@ def test_unrecognized_date_is_rejected_in_stage_not_raw(spark, tmp_path):
     assert "not-a-date" in raw.columns
     with pytest.raises(ValueError):
         unpivot(classify(raw, PARAMETERS))
+
+
+def test_each_month_shows_its_source_value(spark):
+    stage = make_stage(source(spark, [(date(2021, 1, 30), "100"), (date(2021, 1, 31), "103"),
+                                      (date(2021, 2, 1), "108"), (date(2021, 2, 2), "110")]))
+    months = make_mart(stage).orderBy("period_start").collect()
+    assert [r.deaths for r in months] == [103, 110]
+    assert all(r.is_incomplete_month for r in months)

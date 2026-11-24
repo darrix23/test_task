@@ -28,24 +28,20 @@ def check_quality(spark, store):
         check("changed_country_names", stage.where(~F.col("country").eqNullSafe(F.col("country_raw"))).count())
         # для сверки витрины отдельно считаем накопительный итог страны на каждую дату
         daily = stage.groupBy("country", "date").agg(F.sum("cumulative_deaths").alias("total"))
-        for unit, key in [("month", "monthly"), ("year", "yearly")]:
-            table = store.table(key)
-            mart = store.read(spark, key)
-            check(table + ":duplicate_keys", mart.groupBy("country", "period_start").count().where("count > 1").count())
-            # проверяем не только уникальность ключей витрины, но и что периоды не потерялись
-            keys = stage.select("country", F.date_trunc(unit, "date").cast("date").alias("period_start")).distinct()
-            check(table + ":row_count", mart.count(), keys.count())
-            #Сверяем накопительный итог именно на последнюю дату периода
-            expected = daily.withColumn("period_start", F.date_trunc(unit, "date").cast("date")).groupBy(
-                "country", "period_start"
-            ).agg(F.max(F.struct("date", "total")).alias("snapshot"))
-            # полное соединение покажет несовпадение и при пропаже строки с любой стороны.
-            comparison = mart.join(expected, ["country", "period_start"], "full")
-            check(table + ":snapshot_matches_stage", comparison.where(
-                ~F.col("cumulative_deaths_end").eqNullSafe(F.col("snapshot.total")) |
-                ~F.col("last_observed_date").eqNullSafe(F.col("snapshot.date"))).count())
-            # неполные периоды ожидаем на краях данных, поэтому это предупреждение, а не ошибка
-            check(table + ":partial_periods", mart.where("NOT is_complete").count(), severity="warning")
+        key = "monthly"
+        table = store.table(key)
+        mart = store.read(spark, key)
+        check(table + ":duplicate_keys", mart.groupBy("country", "period_start").count().where("count > 1").count())
+        expected = daily.withColumn("period_start", F.trunc("date", "month")).groupBy(
+            "country", "period_start"
+        ).agg(F.max(F.struct("date", "total")).alias("snapshot"))
+        check(table + ":row_count", mart.count(), expected.count())
+        #сверяем значение страны на последнюю дату месяца, разниц и сумм по датам здесь нет
+        comparison = mart.join(expected, ["country", "period_start"], "full")
+        check(table + ":snapshot_matches_stage", comparison.where(
+            ~F.col("deaths").eqNullSafe(F.col("snapshot.total")) |
+            ~F.col("last_observed_date").eqNullSafe(F.col("snapshot.date"))).count())
+        check(table + ":partial_periods", mart.where("NOT is_complete").count(), severity="warning")
         check("excluded_source_rows", store.read(spark, "excluded").count(), severity="warning")
         # отчет сразу пишем в stage.quality_report, чтобы видеть причины даже если проверка упадет
         report = spark.createDataFrame(reports, "check_name string, severity string, observed long, expected long, passed boolean, run_id string")

@@ -9,14 +9,13 @@ separator: ';'
 #порядок стадий, фабрика соединит их последовательно
 steps: [raw, stage, mart, validate]
 
-# куда пишем результаты, названия таблиц можно поменять здесь
+#в monthly показываем значение страны на последнюю дату месяца
 tables:
   raw: raw.covid_{year}
   manifest: raw.manifest
   daily: stage.covid_daily
   excluded: stage.excluded_rows
   monthly: mart.covid_monthly
-  yearly: mart.covid_yearly
   quality: stage.quality_report
 
 # исключения оставляем согласованные, названия остальных стран не меняем
