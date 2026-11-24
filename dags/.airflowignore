@@ -1,0 +1,2 @@
+# тут утилиты и скрипты, сами DAG лежат в корне dags
+(^|/)(etl|jobs|pipelines|spark_scripts|__pycache__)(/|$)

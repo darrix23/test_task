@@ -1,0 +1,35 @@
+# один ямл — один даг, ниже только нужные для этого пайплайна параметры
+dag_id: covid_pipeline
+schedule: null
+postgres_conn_id: covid_postgres
+years: [2020, 2021, 2022, 2023]
+input_path: /usr/local/airflow/data/raw_{year}.csv
+separator: ';'
+
+#порядок стадий, фабрика соединит их последовательно
+steps: [raw, stage, mart, validate]
+
+# куда пишем результаты, названия таблиц можно поменять здесь
+tables:
+  raw: raw.covid_{year}
+  manifest: raw.manifest
+  daily: stage.covid_daily
+  excluded: stage.excluded_rows
+  monthly: mart.covid_monthly
+  yearly: mart.covid_yearly
+  quality: stage.quality_report
+
+# исключения оставляем согласованные, названия остальных стран не меняем
+excluded_countries:
+  Antarctica: continent
+  Diamond Princess: cruise_ship
+  MS Zaandam: cruise_ship
+  Summer Olympics 2020: event
+  Winter Olympics 2022: event
+  Kosovo: outside_selected_UN_list
+  Taiwan*: outside_selected_UN_list
+  Korea: untrusted_shifted_source
+excluded_regions:
+  Canada:
+    Diamond Princess: cruise_ship
+    Grand Princess: cruise_ship
