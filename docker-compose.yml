@@ -35,8 +35,47 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
       POSTGRES_PORT: ${POSTGRES_PORT_IN:-5432}
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT_IN:-5432}/${POSTGRES_DB:-airflow}
-    entrypoint: >
-      bash -c "airflow db migrate && python /usr/local/airflow/bootstrap_airflow.py"
+    entrypoint:
+      - python
+      - -c
+      - |
+        import json
+        import os
+        import subprocess
+
+        from airflow.models import Connection
+        from airflow.utils.session import create_session
+
+
+        # сначала применяем миграции, потом создаем пользователя и подключения
+        subprocess.run(["airflow", "db", "migrate"], check=True)
+
+        # создаем локального админа, при повторном запуске уже существующий пользователь не должен ломать инициализацию
+        result = subprocess.run([
+            "airflow", "users", "create", "--username", "admin", "--password", "admin",
+            "--firstname", "Admin", "--lastname", "User", "--role", "Admin", "--email", "admin@example.com",
+        ], capture_output=True, text=True)
+        print(result.stdout) # вывод команды оставляем в логах инициализации
+        if result.returncode and "already exist" not in (result.stdout + result.stderr).lower():
+            raise RuntimeError(result.stderr)
+
+        # ниже собираем два подключения: локальный спарк и postgres, реквизиты базы подтягиваем из енва
+        connections = [
+            dict(conn_id="spark_default", conn_type="spark", host="local[2]",
+                 extra=json.dumps({"deploy-mode": "client", "spark-binary": "spark-submit"})),
+            dict(conn_id="covid_postgres", conn_type="postgres", host=os.environ["POSTGRES_HOST"],
+                 port=int(os.environ["POSTGRES_PORT"]), schema=os.environ["POSTGRES_DB"],
+                 login=os.environ["POSTGRES_USER"], password=os.environ["POSTGRES_PASSWORD"]),
+        ]
+        with create_session() as session:
+            for config in connections:
+                connection = session.query(Connection).filter_by(conn_id=config["conn_id"]).one_or_none()
+                if connection is None:
+                    session.add(Connection(**config)) #** раскладывает словарь в поля нового подключения
+                else:
+                    for field, value in config.items():
+                        setattr(connection, field, value) # имя поля лежит в переменной, setattr обновляет это поле у уже существующего подключения
+        print("Airflow connections configured")
 
   #вебсервер показывает UI, сами задачи запускает scheduler ниже
   airflow-webserver:

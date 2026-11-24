@@ -29,6 +29,5 @@ WORKDIR /usr/local/airflow
 RUN mkdir -p dags data logs
 COPY ./dags/ ./dags/
 COPY ./data/ ./data/
-COPY bootstrap_airflow.py ./bootstrap_airflow.py
 
 COPY tests/ ./tests/
