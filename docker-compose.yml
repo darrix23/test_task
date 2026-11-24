@@ -1,5 +1,4 @@
-version: '3.8'
-
+# тут запускаем базу, airflow и jupyter вместе, параметры портов можно переопределить через енв
 services:
   postgres:
     image: postgres:16
@@ -14,10 +13,11 @@ services:
     ports:
       - "${POSTGRES_PORT_OUT:-5444}:${POSTGRES_PORT_IN:-5432}"
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "airflow"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       retries: 5
 
+  # сначала миграции airflow и создание подключений, вебсервер с планировщиком дождутся завершения
   airflow-initdb:
     build:
       context: .
@@ -29,14 +29,16 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__LOGGING__BASE_LOG_FOLDER: /usr/local/airflow/logs
       AIRFLOW__LOGGING__REMOTE_LOGGING: False
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-airflow}
+      POSTGRES_USER: ${POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
+      POSTGRES_PORT: ${POSTGRES_PORT_IN:-5432}
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT_IN:-5432}/${POSTGRES_DB:-airflow}
     entrypoint: >
-      bash -c "airflow db init && 
-               sleep 2 &&
-               airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com &&
-               airflow connections add 'spark_default' --conn-type 'spark' --conn-host 'local' --conn-extra '{\"queue\": \"default\", \"deploy-mode\": \"client\", \"spark-home\": \"/opt/spark\", \"spark-binary\": \"spark-submit\", \"namespace\": \"default\", \"master\": \"local[*]\"}' &&
-               
-               mkdir -p /usr/local/airflow/logs"
+      bash -c "airflow db migrate && python /usr/local/airflow/bootstrap_airflow.py"
 
+  #вебсервер показывает UI, сами задачи запускает scheduler ниже
   airflow-webserver:
     build:
       context: .
@@ -59,6 +61,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-airflow}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
       POSTGRES_PORT: ${POSTGRES_PORT_IN:-5432}
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT_IN:-5432}/${POSTGRES_DB:-airflow}
     volumes:
       - ./dags:/usr/local/airflow/dags
       - ./logs:/usr/local/airflow/logs
@@ -68,6 +71,7 @@ services:
     command: >
       bash -c "airflow webserver"
 
+  # локальный executor выполняет задачи в контейнере планировщика, папки dags и logs общие с вебсервером
   airflow-scheduler:
     build:
       context: .
@@ -85,6 +89,12 @@ services:
       AIRFLOW__LOGGING__REMOTE_LOGGING: False
       AIRFLOW__LOGGING__LOG_LEVEL: INFO
       AIRFLOW__SCHEDULER__CATCHUP_BY_DEFAULT: False
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-airflow}
+      POSTGRES_USER: ${POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
+      POSTGRES_PORT: ${POSTGRES_PORT_IN:-5432}
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT_IN:-5432}/${POSTGRES_DB:-airflow}
     volumes:
       - ./dags:/usr/local/airflow/dags
       - ./logs:/usr/local/airflow/logs
@@ -93,6 +103,7 @@ services:
       bash -c "mkdir -p /usr/local/airflow/logs && 
                airflow scheduler"
 
+  # jupyter для исследования, папку notebooks с компьютера видим внутри как work
   jupyter:
     build:
       context: .

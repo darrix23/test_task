@@ -1,3 +1,4 @@
+-- создаем три схемы, IF NOT EXISTS позволяет не падать если схема уже есть
 CREATE SCHEMA IF NOT EXISTS raw;
 CREATE SCHEMA IF NOT EXISTS stage;
 CREATE SCHEMA IF NOT EXISTS mart;
